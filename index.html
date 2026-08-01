@@ -124,6 +124,26 @@
     text-shadow: 0 0 12px rgba(255,122,26,0.85), 0 0 22px rgba(255,60,0,0.55);
     letter-spacing: 1px;
   }
+
+  #padWrap {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    display: flex;
+    gap: 10px;
+  }
+  #downBtn {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: rgba(30,30,28,0.85); border: 2px solid #555;
+    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 0;
+  }
+  #popBtn {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: rgba(244,198,10,0.92); border: 2px solid #b98600;
+    color: #161513; font-size: 11px; font-weight: 800; letter-spacing: 0.5px;
+    padding: 0;
+  }
 </style>
 </head>
 <body>
@@ -139,7 +159,7 @@
 
   <div id="homeScreen">
     <div class="title">WHEELIE</div>
-    <div class="subtitle">Sur-Ron Edition</div>
+    <div class="subtitle">Edinburgh Edition</div>
     <button id="playBtn">&#9654; Play</button>
   </div>
 
@@ -147,12 +167,14 @@
     <div class="bubbleTxt">ROTATE<br>YOUR PHONE</div>
   </div>
 
+  <div id="padWrap">
+    <button id="downBtn">DOWN</button>
+    <button id="popBtn">POP UP</button>
+  </div>
+
   <div class="controls">
-    <div class="hint">space = lift wheel &middot; up arrow = bunny hop</div>
-    <div style="display:flex; gap:8px;">
-      <button id="hopBtn">hop</button>
-      <button id="holdBtn">hold to lift</button>
-    </div>
+    <div class="hint">wheelie = speed up &middot; wheel down = slow down &middot; up arrow = hop</div>
+    <button id="hopBtn" style="width:90px;">hop</button>
   </div>
 
   <div id="overlay">
@@ -174,7 +196,8 @@
   var overlay = document.getElementById('overlay');
   var overText = document.getElementById('overText');
   var overDist = document.getElementById('overDist');
-  var holdBtn = document.getElementById('holdBtn');
+  var downBtn = document.getElementById('downBtn');
+  var popBtn = document.getElementById('popBtn');
   var hopBtn = document.getElementById('hopBtn');
   var restartBtn = document.getElementById('restartBtn');
   var rotateMsg = document.getElementById('rotateMsg');
@@ -185,18 +208,33 @@
   var groundY = 196;
   var state;
   var sky = ctx.createLinearGradient(0,0,0,groundY);
-  sky.addColorStop(0, '#bfe3f7');
-  sky.addColorStop(1, '#e8f5ec');
+  sky.addColorStop(0, '#c3d2d6');
+  sky.addColorStop(1, '#e6ede9');
   var BIKE_SCALE = 1.4;
+  var MIN_SPEED = 70, MAX_SPEED = 420, ACCEL = 90, DECEL = 70;
+
+  var buildingsPattern = [
+    {dx:0,   w:34, h:58, c:'#8f8577'},
+    {dx:32,  w:26, h:78, c:'#786f61'},
+    {dx:56,  w:38, h:50, c:'#9c9284'},
+    {dx:92,  w:30, h:70, c:'#847a6c'},
+    {dx:120, w:44, h:56, c:'#948a7c'},
+    {dx:162, w:28, h:82, c:'#736a5d'},
+    {dx:188, w:32, h:60, c:'#8a8072'}
+  ];
+  var CLUSTER_W = 220;
 
   function reset(){
     state = {
-      x: 120, speed: 200, angle: 0, angVel: 0, throttle: false,
+      x: 120, speed: 150, angle: 0, angVel: 0, throttle: false, pushDown: false,
       dist: 0, alive: true, started: false, obstacles: [], nextObstacleAt: 260,
       wheelieTime: 0, y: 0, vy: 0, airborne: false, hopFlash: 0,
-      wheelSpin: 0, dust: [], clouds: [
-        {x:80,y:40,s:1}, {x:300,y:70,s:0.7}, {x:480,y:35,s:0.85}
-      ], hills: [{x:0},{x:320}]
+      wheelSpin: 0, dust: [],
+      susF: 0, susFV: 0, susR: 0, susRV: 0,
+      clouds: [{x:80,y:36,s:1}, {x:300,y:60,s:0.75}, {x:480,y:30,s:0.9}],
+      hills: [{x:0},{x:320}],
+      buildings: [{x:0},{x:220},{x:440}],
+      castle: {x: 700}
     };
     overlay.style.display = 'none';
   }
@@ -242,27 +280,59 @@
       state.hills[h].x -= dt*16;
       if(state.hills[h].x < -320) state.hills[h].x += 640;
     }
+    for(var b=0;b<state.buildings.length;b++){
+      state.buildings[b].x -= dt*26;
+      if(state.buildings[b].x < -CLUSTER_W) state.buildings[b].x += CLUSTER_W*state.buildings.length;
+    }
+    state.castle.x -= dt*14;
+    if(state.castle.x < -260) state.castle.x += 1400;
+
+    var SK = 260, SD = 15;
+    state.susFV += (-SK*state.susF - SD*state.susFV)*dt;
+    state.susF += state.susFV*dt;
+    if(state.susF < 0){ state.susF = 0; if(state.susFV < 0) state.susFV = 0; }
+    if(state.susF > 10) state.susF = 10;
+    state.susRV += (-SK*state.susR - SD*state.susRV)*dt;
+    state.susR += state.susRV*dt;
+    if(state.susR < 0){ state.susR = 0; if(state.susRV < 0) state.susRV = 0; }
+    if(state.susR > 10) state.susR = 10;
 
     if(!state.started || !state.alive) return;
 
-    var CRASHA = 68, torqueUp = 170, gravity = 130, gravityY = 620, jumpVy = -300;
+    var CRASHA = 68, torqueUp = 170, gravity = 130, strongDown = 260, gravityY = 620, jumpVy = -300;
 
-    if(state.throttle){ state.angVel += torqueUp*dt; } else { state.angVel -= gravity*dt; }
+    if(state.throttle){
+      state.angVel += torqueUp*dt;
+    } else if(state.pushDown){
+      state.angVel -= strongDown*dt;
+    } else {
+      state.angVel -= gravity*dt;
+    }
     state.angVel *= 0.965;
     state.angle += state.angVel*dt;
     if(state.angle < 0){ state.angle = 0; state.angVel = 0; }
 
     if(state.angle > CRASHA){ crash('flipped over backward'); return; }
-    if(state.angle > 20 && !state.airborne) state.wheelieTime += dt;
 
-    state.speed = 200 + Math.min(state.dist/5, 140);
+    var wheelieing = state.angle > 20;
+    if(wheelieing) state.wheelieTime += dt;
+
+    state.speed += (wheelieing ? ACCEL : -DECEL) * dt;
+    if(state.speed < MIN_SPEED) state.speed = MIN_SPEED;
+    if(state.speed > MAX_SPEED) state.speed = MAX_SPEED;
+
     state.dist += state.speed*dt/10;
     state.wheelSpin += state.speed*dt*0.05;
 
     if(state.airborne){
       state.vy += gravityY*dt;
       state.y += state.vy*dt;
-      if(state.y >= 0){ state.y = 0; state.vy = 0; state.airborne = false; }
+      if(state.y >= 0){
+        var landingImpact = Math.min(10, Math.abs(state.vy)/45);
+        state.y = 0; state.vy = 0; state.airborne = false;
+        state.susFV += landingImpact*13;
+        state.susRV += landingImpact*10;
+      }
     } else {
       if(Math.random() < 0.5){
         state.dust.push({x: state.x-16, y: groundY+2, life: 0.4, vy: -18-Math.random()*14, vx: -40-Math.random()*20});
@@ -281,13 +351,12 @@
       o.x -= groundSpeed*dt;
       var bikeLeft = state.x - 4, bikeRight = state.x + 30;
       var overlap = (o.x < bikeRight && o.x+o.w > bikeLeft);
-      if(overlap && !o.hit){
-        if(o.type === 'ramp'){
-          if(!state.airborne){ o.hit = true; state.airborne = true; state.vy = jumpVy; }
-        } else {
-          if(!state.airborne && state.angle < 24){ crash('front wheel caught a pothole'); return; }
-          o.hit = true;
-        }
+      if(overlap && !o.hit && o.type === 'ramp' && !state.airborne){
+        o.hit = true;
+        state.airborne = true;
+        state.vy = jumpVy;
+        state.susFV += 5;
+        state.susRV += 6;
       }
       if(o.x < -60) state.obstacles.splice(j,1);
     }
@@ -310,6 +379,7 @@
   function bunnyHop(){
     if(!state || !state.started || !state.alive || state.airborne) return;
     state.airborne = true; state.vy = -260; state.hopFlash = 0.35;
+    state.susFV += 5; state.susRV += 6;
   }
 
   function drawWheel(cx, cy, r, spin){
@@ -342,7 +412,10 @@
     ctx.beginPath(); ctx.arc(cx,cy,3,0,Math.PI*2); ctx.fill();
   }
 
-  function drawBikeAndRider(bx, by, ang, wobble){
+  function drawBikeAndRider(bx, by, ang, wobble, susF, susR){
+    var frontShift = susF * 1.3;
+    var rearShift = susR * 1.3;
+
     ctx.save();
     ctx.translate(bx, by);
     ctx.rotate(-ang*0.55);
@@ -361,28 +434,28 @@
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(-4, -6);
-    ctx.lineTo(4, -26);
+    ctx.lineTo(4, -26+rearShift);
     ctx.stroke();
 
     ctx.strokeStyle = '#161513';
     ctx.lineWidth = 6.5;
     ctx.beginPath();
     ctx.moveTo(30, 0);
-    ctx.lineTo(24, -30);
+    ctx.lineTo(24, -30+frontShift);
     ctx.stroke();
     ctx.strokeStyle = '#e8b400';
     ctx.lineWidth = 2.4;
     ctx.beginPath();
     ctx.moveTo(28, -6);
-    ctx.lineTo(23.5, -28);
+    ctx.lineTo(23.5, -28+frontShift);
     ctx.stroke();
 
     ctx.fillStyle = '#161513';
     ctx.beginPath();
     ctx.moveTo(2, -16);
-    ctx.lineTo(6, -34);
-    ctx.lineTo(18, -34);
-    ctx.lineTo(22, -22);
+    ctx.lineTo(6, -34+rearShift*0.4);
+    ctx.lineTo(18, -34+frontShift*0.3);
+    ctx.lineTo(22, -22+frontShift*0.3);
     ctx.lineTo(16, -14);
     ctx.closePath();
     ctx.fill();
@@ -390,30 +463,30 @@
     ctx.strokeStyle = '#f4c60a';
     ctx.lineWidth = 2.6;
     ctx.beginPath();
-    ctx.moveTo(6, -30);
-    ctx.lineTo(17, -30);
+    ctx.moveTo(6, -30+rearShift*0.4);
+    ctx.lineTo(17, -30+frontShift*0.3);
     ctx.stroke();
 
     ctx.fillStyle = '#26221f';
     ctx.beginPath();
-    ctx.ellipse(2, -35, 8, 3.4, -0.15, 0, Math.PI*2);
+    ctx.ellipse(2, -35+rearShift*0.5, 8, 3.4, -0.15, 0, Math.PI*2);
     ctx.fill();
 
     ctx.fillStyle = '#f4c60a';
-    ctx.fillRect(11, -27, 7, 7);
+    ctx.fillRect(11, -27+rearShift*0.2, 7, 7);
     ctx.strokeStyle = '#161513';
     ctx.lineWidth = 1;
-    ctx.strokeRect(11, -27, 7, 7);
+    ctx.strokeRect(11, -27+rearShift*0.2, 7, 7);
 
     ctx.strokeStyle = '#26221f';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(20, -44);
-    ctx.lineTo(30, -46);
+    ctx.moveTo(20, -44+frontShift);
+    ctx.lineTo(30, -46+frontShift);
     ctx.stroke();
 
     ctx.fillStyle = '#e9e2c8';
-    ctx.beginPath(); ctx.arc(26, -32, 3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(26, -32+frontShift*0.7, 3, 0, Math.PI*2); ctx.fill();
 
     drawWheel(-14, 0, 15, state.wheelSpin);
     ctx.save();
@@ -423,13 +496,13 @@
     drawWheel(30, 0, 15, state.wheelSpin);
     ctx.restore();
 
-    var hip = {x:1, y:-32};
-    var shoulder = {x:14, y:-52};
-    var handlebar = {x:27, y:-45};
-    var elbow = {x:20, y:-42};
+    var hip = {x:1, y:-32+rearShift*0.35};
+    var shoulder = {x:14, y:-52+rearShift*0.15+frontShift*0.15};
+    var handlebar = {x:27, y:-45+frontShift};
+    var elbow = {x:20, y:-42+frontShift*0.6};
     var peg = {x:8, y:-16};
     var knee = {x:9, y:-28};
-    var headC = {x:17, y:-60};
+    var headC = {x:17, y:-60+rearShift*0.15+frontShift*0.15};
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -479,51 +552,123 @@
     ctx.restore();
   }
 
+  function drawCastle(x, baseY){
+    ctx.save();
+    ctx.translate(x, baseY);
+
+    ctx.fillStyle = '#7a7f76';
+    ctx.beginPath();
+    ctx.moveTo(-70, 0);
+    ctx.quadraticCurveTo(-40, -70, 0, -78);
+    ctx.quadraticCurveTo(40, -70, 70, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    var towers = [
+      {dx:-32, w:16, h:44},
+      {dx:-8,  w:22, h:64},
+      {dx:20,  w:14, h:40}
+    ];
+    ctx.fillStyle = '#5b5750';
+    for(var t=0;t<towers.length;t++){
+      var tw = towers[t];
+      var top = -78 - tw.h;
+      ctx.fillRect(tw.dx, top, tw.w, tw.h+80);
+      for(var cIdx=0; cIdx*6 < tw.w; cIdx++){
+        if(cIdx%2===0) ctx.fillRect(tw.dx+cIdx*6, top-6, 4, 6);
+      }
+    }
+
+    ctx.strokeStyle = '#5b5750';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(14, -142);
+    ctx.lineTo(14, -160);
+    ctx.stroke();
+    ctx.fillStyle = '#1d5f96';
+    ctx.fillRect(14, -160, 14, 9);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(14,-160); ctx.lineTo(28,-151);
+    ctx.moveTo(28,-160); ctx.lineTo(14,-151);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawBuildingCluster(baseX){
+    for(var i=0;i<buildingsPattern.length;i++){
+      var bd = buildingsPattern[i];
+      var x = baseX + bd.dx;
+      ctx.fillStyle = bd.c;
+      ctx.fillRect(x, groundY - bd.h, bd.w, bd.h);
+      ctx.fillStyle = '#3f3a33';
+      ctx.fillRect(x+4, groundY - bd.h - 8, 4, 9);
+      ctx.fillStyle = 'rgba(60,52,42,0.5)';
+      for(var wy = groundY - bd.h + 10; wy < groundY - 8; wy += 14){
+        ctx.fillRect(x+6, wy, 5, 7);
+        if(bd.w > 24) ctx.fillRect(x+bd.w-11, wy, 5, 7);
+      }
+    }
+  }
+
   function draw(dt){
     ctx.clearRect(0,0,W,H);
     ctx.fillStyle = sky;
     ctx.fillRect(0,0,W,groundY+2);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath(); ctx.arc(560,44,20,0,Math.PI*2); ctx.fill();
-
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#eef1ee';
     for(var c=0;c<state.clouds.length;c++){
       var cl = state.clouds[c];
-      ctx.globalAlpha = 0.85;
+      ctx.globalAlpha = 0.8;
       ctx.beginPath();
-      ctx.ellipse(cl.x, cl.y, 22*cl.s, 10*cl.s, 0, 0, Math.PI*2);
-      ctx.ellipse(cl.x+16*cl.s, cl.y+4*cl.s, 16*cl.s, 8*cl.s, 0, 0, Math.PI*2);
-      ctx.ellipse(cl.x-16*cl.s, cl.y+4*cl.s, 14*cl.s, 7*cl.s, 0, 0, Math.PI*2);
+      ctx.ellipse(cl.x, cl.y, 24*cl.s, 10*cl.s, 0, 0, Math.PI*2);
+      ctx.ellipse(cl.x+18*cl.s, cl.y+4*cl.s, 17*cl.s, 8*cl.s, 0, 0, Math.PI*2);
+      ctx.ellipse(cl.x-18*cl.s, cl.y+4*cl.s, 15*cl.s, 7*cl.s, 0, 0, Math.PI*2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
-    ctx.fillStyle = '#cfe9d6';
+    ctx.fillStyle = '#a9b6a4';
     for(var h=0;h<state.hills.length;h++){
       var hx = state.hills[h].x;
       ctx.beginPath();
-      ctx.ellipse(hx+80, groundY+30, 140, 60, 0, Math.PI, 0, true);
+      ctx.ellipse(hx+80, groundY+34, 150, 66, 0, Math.PI, 0, true);
       ctx.fill();
     }
 
-    ctx.fillStyle = '#e9e2d3';
-    ctx.fillRect(0, groundY, W, H-groundY);
+    drawCastle(state.castle.x, groundY);
+
+    for(var b=0;b<state.buildings.length;b++){
+      drawBuildingCluster(state.buildings[b].x);
+    }
+
     var roadGrad = ctx.createLinearGradient(0,groundY,0,groundY+26);
-    roadGrad.addColorStop(0,'#3a3733');
-    roadGrad.addColorStop(1,'#2a2825');
+    roadGrad.addColorStop(0,'#8c8a83');
+    roadGrad.addColorStop(1,'#726f68');
     ctx.fillStyle = roadGrad;
     ctx.fillRect(0, groundY, W, 26);
 
-    var stripeOffset = (state.dist*10) % 44;
-    ctx.strokeStyle = '#d8cfa8';
-    ctx.lineWidth = 3;
-    ctx.setLineDash([18,26]);
+    var cobbleOffset = (state.dist*10) % 18;
+    ctx.fillStyle = 'rgba(60,58,52,0.35)';
+    for(var row=0; row<2; row++){
+      var ry = groundY + 5 + row*10;
+      for(var cx = -cobbleOffset - (row%2===0?0:9); cx < W; cx += 18){
+        ctx.beginPath();
+        ctx.arc(cx, ry, 2.4, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+
+    ctx.strokeStyle = '#c7c2ae';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(-stripeOffset, groundY+13);
-    ctx.lineTo(W, groundY+13);
+    ctx.moveTo(0, groundY+6);
+    ctx.lineTo(W, groundY+6);
+    ctx.moveTo(0, groundY+20);
+    ctx.lineTo(W, groundY+20);
     ctx.stroke();
-    ctx.setLineDash([]);
 
     for(var i=0;i<state.dust.length;i++){
       var p = state.dust[i];
@@ -563,34 +708,45 @@
     var bx = state.x, by = groundY + state.y;
     var ang = state.angle * Math.PI/180;
     var wobble = Math.sin(state.wheelSpin*2)*0.6;
+    var susBounce = (state.susF + state.susR) * 0.3;
 
-    drawBikeAndRider(bx, by, ang, wobble);
+    drawBikeAndRider(bx, by, ang, wobble+susBounce, state.susF, state.susR);
 
     ctx.fillStyle = '#1d5f96';
     ctx.font = '600 13px sans-serif';
     ctx.textAlign = 'center';
     if(state.hopFlash > 0){ ctx.fillText('hop!', bx+8, by-130); }
     else if(state.airborne){ ctx.fillText('airborne!', bx+8, by-130); }
-    else if(state.angle > 20){ ctx.fillText('wheelie!', bx+8, by-108); }
+    else if(state.angle > 20){ ctx.fillText('speeding up!', bx+8, by-108); }
+    else if(state.started && state.alive){ ctx.fillText('slowing down', bx+8, by-108); }
   }
 
-  function setThrottle(v){ if(!state.started || !state.alive) return; state.throttle = v; }
+  function setThrottle(v){ if(!state.started || !state.alive) return; state.throttle = v; if(v) state.pushDown = false; }
+  function setPushDown(v){ if(!state.started || !state.alive) return; state.pushDown = v; if(v) state.throttle = false; }
 
-  holdBtn.addEventListener('mousedown', function(e){ e.preventDefault(); setThrottle(true); });
-  holdBtn.addEventListener('mouseup', function(){ setThrottle(false); });
-  holdBtn.addEventListener('mouseleave', function(){ setThrottle(false); });
-  holdBtn.addEventListener('touchstart', function(e){ e.preventDefault(); setThrottle(true); });
-  holdBtn.addEventListener('touchend', function(e){ e.preventDefault(); setThrottle(false); });
+  popBtn.addEventListener('mousedown', function(e){ e.preventDefault(); setThrottle(true); });
+  popBtn.addEventListener('mouseup', function(){ setThrottle(false); });
+  popBtn.addEventListener('mouseleave', function(){ setThrottle(false); });
+  popBtn.addEventListener('touchstart', function(e){ e.preventDefault(); setThrottle(true); });
+  popBtn.addEventListener('touchend', function(e){ e.preventDefault(); setThrottle(false); });
+
+  downBtn.addEventListener('mousedown', function(e){ e.preventDefault(); setPushDown(true); });
+  downBtn.addEventListener('mouseup', function(){ setPushDown(false); });
+  downBtn.addEventListener('mouseleave', function(){ setPushDown(false); });
+  downBtn.addEventListener('touchstart', function(e){ e.preventDefault(); setPushDown(true); });
+  downBtn.addEventListener('touchend', function(e){ e.preventDefault(); setPushDown(false); });
 
   hopBtn.addEventListener('click', function(){ bunnyHop(); });
   hopBtn.addEventListener('touchstart', function(e){ e.preventDefault(); bunnyHop(); });
 
   window.addEventListener('keydown', function(e){
     if(e.code==='Space'){ e.preventDefault(); setThrottle(true); }
+    if(e.code==='ArrowDown'){ e.preventDefault(); setPushDown(true); }
     if(e.code==='ArrowUp'){ e.preventDefault(); if(!e.repeat) bunnyHop(); }
   });
   window.addEventListener('keyup', function(e){
     if(e.code==='Space'){ e.preventDefault(); setThrottle(false); }
+    if(e.code==='ArrowDown'){ e.preventDefault(); setPushDown(false); }
   });
 
   restartBtn.addEventListener('click', function(){
